@@ -8,6 +8,7 @@ import io
 import logging
 import os
 import platform
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -171,7 +172,33 @@ def load(model: str, voice: str | None, speed: float, extra: dict, verbose: bool
     else:
         print(f"read2me: downloading {repo} (first run only)…", file=sys.stderr)
     _quiet_hub()
+    _shorten_espeak_data_path()
     return MlxEngine(model, voice, speed, extra, verbose)
+
+
+def _shorten_espeak_data_path() -> None:
+    """espeak-ng keeps its data path in a 160-byte buffer and silently falls back to a
+    path baked in at build time when it's longer, then exits the whole process on the
+    first unknown word. Deep install locations hit that, so point it at a short copy (not a
+    symlink: phonemizer resolves symlinks back to the long path)."""
+    try:
+        import espeakng_loader
+        import misaki.espeak  # noqa: F401 (sets espeak's library and data path on import)
+        from phonemizer.backend.espeak.wrapper import EspeakWrapper
+    except ImportError:
+        return
+    data = espeakng_loader.get_data_path()
+    if len(data.encode()) < 150:
+        return
+    copy = Path.home() / ".cache" / "read2me" / "espeak-ng-data"
+    source = copy / ".source"
+    if not source.exists() or source.read_text() != data:
+        if copy.is_symlink() or copy.is_file():
+            copy.unlink()
+        shutil.rmtree(copy, ignore_errors=True)
+        shutil.copytree(data, copy)
+        source.write_text(data)
+    EspeakWrapper.set_data_path(str(copy))
 
 
 def _snapshot(repo: str) -> str | None:
